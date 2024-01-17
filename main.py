@@ -1,45 +1,128 @@
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
-
-# Make NumPy printouts easier to read.
-np.set_printoptions(precision=3, suppress=True)
-
 import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, classification_report
 
-from tensorflow import keras
-from tensorflow.keras import layers
+# This if used for google collab when trying to run the test url again, it runs into a error without this line
+tf.data.experimental.enable_debug_mode()
+# Loading dataset
+data = pd.read_csv('dataset_B_05_2020.csv')
+test_data = data.copy()
+# Extract target variable
+y = data['status']
 
-print(tf.__version__)
+# Dropping our non-numeric and target columns
+exclude_columns = ['url', 'status']
+X_numeric = data.drop(columns=exclude_columns).select_dtypes(include=[np.number])
 
-# Load dataset
-csv_file = 'dataset_B_05_2020.csv'
-column_names = ['url', 'length_url', 'length_hostname', 'ip', 'nb_dots', 'nb_hyphens', 'nb_at', 'nb_qm', 'nb_and', 'nb_or', 'nb_eq', 'nb_underscore', 'nb_tilde', 'nb_percent', 'nb_slash', 'nb_star', 'nb_colon', 'nb_comma', 'nb_semicolon', 'nb_dollar', 'nb_space', 'nb_www', 'nb_com', 'nb_dslash', 'http_in_path', 'https_token', 'ratio_digits_url', 'ratio_digits_host', 'punycode', 'port', 'tld_in_path', 'tld_in_subdomain', 'abnormal_subdomain', 'nb_subdomains', 'prefix_suffix', 'random_domain', 'shortening_service', 'path_extension', 'nb_redirection', 'nb_external_redirection', 'length_words_raw', 'char_repeat', 'shortest_words_raw', 'shortest_word_host', 'shortest_word_path', 'longest_words_raw', 'longest_word_host', 'longest_word_path', 'avg_words_raw', 'avg_word_host', 'avg_word_path', 'phish_hints', 'domain_in_brand', 'brand_in_subdomain', 'brand_in_path', 'suspecious_tld', 'statistical_report', 'nb_hyperlinks', 'ratio_intHyperlinks', 'ratio_extHyperlinks', 'ratio_nullHyperlinks', 'nb_extCSS', 'ratio_intRedirection', 'ratio_extRedirection', 'ratio_intErrors', 'ratio_extErrors', 'login_form', 'external_favicon', 'links_in_tags', 'submit_email', 'ratio_intMedia', 'ratio_extMedia', 'sfh', 'iframe', 'popup_window', 'safe_anchor', 'onmouseover', 'right_clic', 'empty_title', 'domain_in_title', 'domain_with_copyright', 'whois_registered_domain', 'domain_registration_length', 'domain_age', 'web_traffic', 'dns_record', 'google_index', 'page_rank', 'status']
-raw_dataset = pd.read_csv(csv_file, names=column_names, na_values='?', comment='\t', sep=',', skipinitialspace=True, dtype={'length_url': str})
-dataset = raw_dataset.copy()
+# Data splitting
+X_train, X_test, y_train, y_test = train_test_split(X_numeric, y, test_size=0.2, random_state=42)
+
+# Converting status column to 0 and 1
+y_train = y_train.map({'legitimate': 0, 'phishing': 1})
+y_test = y_test.map({'legitimate': 0, 'phishing': 1})
+
+# Data scaling
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Model building
+model = tf.keras.Sequential([
+    tf.keras.layers.Dense(64, activation='relu', input_shape=(X_train_scaled.shape[1],)),
+    tf.keras.layers.Dense(32, activation='relu'),
+    tf.keras.layers.Dense(16, activation='relu'),
+    tf.keras.layers.Dense(1, activation='sigmoid')
+])
+
+model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+# Model training
+model.fit(X_train_scaled, y_train, epochs=10, batch_size=32, validation_data=(X_test_scaled, y_test))
+
+# Model evaluation
+y_pred = model.predict(X_test_scaled)
+y_pred_binary = (y_pred > 0.5).astype(int)
+
+print("Accuracy:", accuracy_score(y_test, y_pred_binary))
+print("Classification Report:\n", classification_report(y_test, y_pred_binary))
+
+# Save the model
+# This could be useful for saving the model, instead of training it on every run
+#model.save('phishing_detection_model.h5')
 
 
-# If our dataset contained any unknown values this would help clean it up
-#dataset.isna().sum()
-#dataset = dataset.dropna()
+def preprocess_input_row(input_row, categorical_columns=[]):
 
-# Display the last few rows of the dataset
-print(dataset.tail())
+    # Dropping our non-numeric and target columns
+    input_features = input_row.drop(columns=['url', 'status'])
 
-train_dataset = dataset.sample(frac=0.8, random_state=0)
-test_dataset = dataset.drop(train_dataset.index)
+    input_features = pd.get_dummies(input_features, columns=categorical_columns, drop_first=True)
 
-train_dataset.describe().transpose()
+    # Ensure that the input data has the same structure as the training data
+    return input_features
 
-train_features = train_dataset.copy()
-test_features = test_dataset.copy()
 
-train_labels = train_features.pop('status')
-test_labels = test_features.pop('status')
+input_row = data.iloc[4]  # Selecting the 4th row due to this is the row we'd like to test
+categorical_columns = ['status']  # Addressing the column we'd like to predict
+input_features_scaled = preprocess_input_row(input_row, categorical_columns)
 
-normalizer = tf.keras.layers.Normalization(axis=-1)
+# Make predictions using the trained model
+input_features_scaled = input_features_scaled.values.astype('float32').reshape(1, -1)[:,:87]  # Take only the first 87 features
+prediction_proba = model.predict(input_features_scaled)
+prediction_binary = (prediction_proba > 0.5).astype(int)
+if prediction_binary[0] == 0:
+    print(f"The URL '{input_row['url']}' is predicted as Legitimate.")
+else:
+    print(f"The URL '{input_row['url']}' is predicted as Phishing.")
 
-normalizer.adapt(np.array(train_features.astype(np.float32)))
 
-print(normalizer.mean.numpy())
+
+
+from sklearn.metrics import confusion_matrix, roc_curve, auc
+import matplotlib.pyplot as plt
+
+# Model evaluation
+y_pred_proba = model.predict(X_test_scaled)
+y_pred_binary = (y_pred_proba > 0.5).astype(int)
+
+# Confusion matrix
+conf_matrix = confusion_matrix(y_test, y_pred_binary)
+
+# Plot confusion matrix
+plt.figure(figsize=(8, 6))
+plt.imshow(conf_matrix, interpolation='nearest', cmap=plt.cm.Blues)
+plt.title('Confusion Matrix')
+plt.colorbar()
+
+classes = ['Legitimate', 'Phishing']
+tick_marks = np.arange(len(classes))
+plt.xticks(tick_marks, classes, rotation=45)
+plt.yticks(tick_marks, classes)
+
+plt.xlabel('Predicted label')
+plt.ylabel('True label')
+
+for i in range(len(classes)):
+    for j in range(len(classes)):
+        plt.text(j, i, format(conf_matrix[i, j], 'd'), horizontalalignment="center", color="white" if conf_matrix[i, j] > conf_matrix.max() / 2 else "black")
+
+plt.show()
+
+# ROC curve
+fpr, tpr, thresholds = roc_curve(y_test, y_pred_proba)
+roc_auc = auc(fpr, tpr)
+
+# Plot ROC curve
+plt.figure(figsize=(8, 6))
+plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (AUC = {:.2f})'.format(roc_auc))
+plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Receiver Operating Characteristic (ROC) Curve')
+plt.legend(loc='lower right')
+plt.show()
